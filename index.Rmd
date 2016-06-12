@@ -1,7 +1,5 @@
 ---
 title: "Practical Machine Learning Course Project"
-author: "M C Lopez"
-date: "11 de junio de 2016"
 output: html_document
 ---
 
@@ -9,22 +7,190 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
+## Introduction
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+The present project was produced as course project for the Practical Machine Learning Course of the Johns Hopkins University Data Science Specialization on Coursera.
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+## Prediction Assignment Background
 
-```{r cars}
-summary(cars)
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: <http://groupware.les.inf.puc-rio.br/har> (see the section on the Weight Lifting Exercise Dataset).
+
+## Project Goal
+
+The goal of the project is to predict the manner in which they did the exercise -this is the "classe" variable in the training set- by using any of the other variables.
+
+## Data
+
+The training data for this project are available here:
+
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv>
+
+The test data are available here:
+
+<https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv>
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.
+
+## Prepare workspace
+
+The first step is to clean the workspace and set the locale date/ time formating:
+
+```{r }
+rm(list=ls())
+Sys.setlocale("LC_TIME", "C")
 ```
 
-## Including Plots
+## Libraries needed
 
-You can also embed plots, for example:
+In order to run this code, it is necessary to install and load the following libraries:
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+* dplyr
+* rpart
+* rpart.plot
+* rattle
+* randomForest
+* RColorBrewer
+* caret
+
+```{r }
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(rattle)
+library(randomForest)
+library(dplyr)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+## Read files
+
+The following step is to read the data files, which must be already placed inside the working directory.
+
+```{r }
+trainingSet <- read.csv('pml-training.csv')
+testingSet <- read.csv('pml-testing.csv')
+```
+
+Let's explore the available variables on the training set:
+
+```{r }
+ls(trainingSet)
+```
+
+And the distribution of the target variable *classe* as well:
+
+```{r }
+table(trainingSet$classe, useNA = 'ifany')
+```
+```{r, echo=FALSE}
+plot(trainingSet$classe)
+```
+
+## Data slicing
+
+Next step is to slice the dataset for building the training and testing sets using the caret package: 60% is allocated to the training set and 40% is allocated to the testing set.
+
+```{r }
+set.seed(40169)
+inTrain <- createDataPartition(y = trainingSet$classe, p = 0.60, list = FALSE)
+myTrainingSet <- trainingSet[inTrain, ]
+myTestingSet <- trainingSet[-inTrain, ]
+```
+
+Let's check the structure of the new datasets:
+
+```{r }
+dim(myTrainingSet)
+dim(myTestingSet)
+```
+
+## Selecting predictors
+
+Near zero variance predictors are identified using the *caret* package and eliminated:
+
+```{r }
+nzvVars <- nearZeroVar(myTrainingSet, saveMetrics = TRUE)
+nzvVars <- row.names(nzvVars)[nzvVars$nzv %in% TRUE]
+nzvVars
+myTrainingSet <- select(myTrainingSet, -one_of(nzvVars))
+```
+
+Let's check how many NA values per row are in the training dataset:
+
+```{r }
+# Variables that are not predictors
+unusedVars <- c('X', 'user_name')
+
+# NAs by row
+myTrainingSet$fullvars <- apply(myTrainingSet[, !names(myTrainingSet) %in% unusedVars], 1, FUN=function(x) sum(!is.na(x)))
+table(myTrainingSet$fullvars)
+```
+
+As only 234 observations have values for all the 106 variables, only the 57 predictors that are complete for the majority of the database will be kept. Now let's check how many NA values per column are in the training dataset in order to identify these 57 columns:
+
+```{r }
+# NAs by column
+completeCol <- apply(myTrainingSet[, !names(myTrainingSet) %in% unusedVars], 2, FUN=function(x) sum(!is.na(x)))
+completeCol <- completeCol[completeCol %in% nrow(myTrainingSet)]
+names(completeCol)
+```
+
+Finally, training and testing sets will be reduced to that group of columns:
+
+```{r }
+# Final columns
+final_col <- c(names(completeCol)[!names(completeCol) %in% 'fullvars'])
+myTrainingSet <- select(myTrainingSet, one_of(final_col))
+myTestingSet <- select(myTestingSet, one_of(final_col))
+testingSet <- select(testingSet, one_of(final_col[!final_col %in% 'classe']))
+dim(myTrainingSet)
+```
+
+# Predict with decision trees
+
+Th first attempt will be predicting with trees, i.e. taking each of the predictors, split the outcome into different groups, evaluate the homogeneity of the outcome within each group and split again if necessary.
+
+```{r }
+modelTree <- rpart(classe ~ ., data = myTrainingSet, method = "class")
+```
+```{r, echo=FALSE}
+fancyRpartPlot(modelTree)
+```
+
+Let's predict on the testing set and check the confusion matrix to evaluate the model:
+```{r }
+predTree <- predict(modelTree, myTestingSet, type = "class")
+confusionMatrix(predTree, myTestingSet$classe)
+```
+
+The accuracy of this model is **0.8769**.
+
+# Predict with random forests
+
+The second attempt will be predicting with random forests, i.e. bootstraping samples and rebuilding trees on each of those bootstrap samples.
+
+```{r }
+modelRF <- randomForest(classe ~. , data = myTrainingSet)
+```
+
+Let's predict on the testing set again and check the confusion matrix to evaluate the new model:
+```{r }
+predRF <- predict(modelRF, myTestingSet, type = "class")
+confusionMatrix(predRF, myTestingSet$classe)
+```
+
+The accuracy of this model is **0.9983**, so modelRF will be the final model.
+
+# Predict on the evalution testing set
+
+Finally, let's predict on the evaluation testing set. To do that all factor variables in the model must have the same levels. In this case, we have only one variable to adjust:
+
+```{r }
+# Adjusting levels of factor variable in the testing sample
+levels(testingSet$cvtd_timestamp) <- levels(myTrainingSet$cvtd_timestamp)
+```
+
+```{r }
+# Prediction on the testing set
+predRFeval <- predict(modelRF, testingSet, type = "class")
+```
