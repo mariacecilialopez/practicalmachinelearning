@@ -101,7 +101,9 @@ Let's check the structure of the new datasets:
 
 ```{r }
 dim(myTrainingSet)
+table(myTrainingSet$classe, useNA = 'ifany')
 dim(myTestingSet)
+table(myTestingSet$classe, useNA = 'ifany')
 ```
 
 ## Selecting predictors
